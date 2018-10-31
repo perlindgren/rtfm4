@@ -41,11 +41,11 @@ pub struct Context {
     // Task -> Alias (`static`)
     scheduleds: Aliases,
     // Task -> Alias (`fn`)
-    spawn: Aliases,
-    // Task -> Alias (`fn`)
-    schedule: Aliases,
+    spawn_fn: Aliases,
     // Alias (`enum`)
     schedule_enum: Ident,
+    // Task -> Alias (`fn`)
+    schedule_fn: Aliases,
     tasks: Aliases,
     // Alias (`struct` / `static mut`)
     timer_queue: Ident,
@@ -64,9 +64,9 @@ impl Default for Context {
             ready_queues: HashMap::new(),
             resources: Aliases::new(),
             scheduleds: Aliases::new(),
-            spawn: Aliases::new(),
-            schedule: Aliases::new(),
+            spawn_fn: Aliases::new(),
             schedule_enum: mk_ident(),
+            schedule_fn: Aliases::new(),
             tasks: Aliases::new(),
             timer_queue: mk_ident(),
         }
@@ -92,9 +92,9 @@ pub fn app(app: &App, analysis: &Analysis) -> TokenStream {
 
     let exceptions = exceptions(&mut ctxt, app, analysis);
 
-    let interrupts = interrupts(&mut ctxt, app, analysis);
+    let (root_interrupts, scoped_interrupts) = interrupts(&mut ctxt, app, analysis);
 
-    let spawn = spawn(&ctxt, app, analysis);
+    let spawn = spawn(&mut ctxt, app, analysis);
 
     let schedule = schedule(&ctxt, app);
 
@@ -118,12 +118,14 @@ pub fn app(app: &App, analysis: &Analysis) -> TokenStream {
 
         #(#exceptions)*
 
+        #root_interrupts
+
         // We put these items into a pseudo-module to avoid a collision between the `interrupt`
         // import and user code
         const APP: () = {
             use #device::interrupt;
 
-            #(#interrupts)*
+            #scoped_interrupts
 
             #(#dispatchers)*
         };
@@ -136,6 +138,7 @@ pub fn app(app: &App, analysis: &Analysis) -> TokenStream {
 
         #[allow(unsafe_code)]
         #[rtfm::export::entry]
+        #[doc(hidden)]
         fn main() -> ! {
             #assertions
 
@@ -271,11 +274,20 @@ fn init(ctxt: &mut Context, app: &App, analysis: &Analysis) -> proc_macro2::Toke
         analysis,
     );
 
+    let module = module(
+        ctxt,
+        Kind::Init,
+        !app.init.args.schedule.is_empty(),
+        !app.init.args.spawn.is_empty(),
+    );
+
     let device = &app.args.device;
     let baseline = &ctxt.baseline;
     let init = &ctxt.init;
     let name = format!("init::{}", init);
     quote!(
+        #module
+
         #(#attrs)*
         #[export_name = #name]
         fn #init(core: rtfm::Peripherals) {
@@ -362,8 +374,71 @@ fn post_init(ctxt: &Context, app: &App, analysis: &Analysis) -> proc_macro2::Tok
     })
 }
 
-/// The prelude injects `resources`, `spawn`, `schedule` and `baseline` into a function
-/// scope
+/// This function creates creates a module for `init` / `idle` / a `task` (see `kind` argument)
+fn module(ctxt: &mut Context, kind: Kind, schedule: bool, spawn: bool) -> proc_macro2::TokenStream {
+    let mut items = vec![];
+
+    let name = kind.ident();
+    let priority = &ctxt.priority;
+    let baseline = &ctxt.baseline;
+
+    if schedule {
+        items.push(quote!(
+            /// Tasks that can be scheduled from this context
+            #[derive(Clone, Copy)]
+            pub struct Schedule<'a> {
+                #[doc(hidden)]
+                pub #priority: &'a core::cell::Cell<u8>,
+            }
+        ));
+    }
+
+    if spawn {
+        if kind.is_idle() {
+            items.push(quote!(
+                /// Tasks that can be spawned from this context
+                #[derive(Clone, Copy)]
+                pub struct Spawn<'a> {
+                    #[doc(hidden)]
+                    pub #priority: &'a core::cell::Cell<u8>,
+                }
+            ));
+        } else {
+            items.push(quote!(
+                /// Tasks that can be spawned from this context
+                #[derive(Clone, Copy)]
+                pub struct Spawn<'a> {
+                    #[doc(hidden)]
+                    pub #baseline: rtfm::Instant,
+                    #[doc(hidden)]
+                    pub #priority: &'a core::cell::Cell<u8>,
+                }
+            ));
+        }
+    }
+
+    if !items.is_empty() {
+        let doc = match kind {
+            Kind::Exception(_) => "Exception handler",
+            Kind::Idle => "Idle loop",
+            Kind::Init => "Initialization function",
+            Kind::Interrupt(_) => "Interrupt handler",
+            Kind::Task(_) => "Software task",
+        };
+
+        quote!(
+            #[doc = #doc]
+            pub mod #name {
+                #(#items)*
+            }
+        )
+    } else {
+        quote!()
+    }
+}
+
+/// The prelude injects `resources`, `spawn`, `schedule` and `start` / `scheduled` (all values) into
+/// a function scope
 fn prelude(
     ctxt: &mut Context,
     kind: Kind,
@@ -382,7 +457,8 @@ fn prelude(
         quote!('a)
     };
 
-    let baseline = &ctxt.baseline;
+    let module = kind.ident();
+
     let priority = &ctxt.priority;
     if !resources.is_empty() {
         let mut defs = vec![];
@@ -522,97 +598,42 @@ fn prelude(
     }
 
     if !spawn.is_empty() {
-        let mut methods = vec![];
+        // Populate `spawn_fn`
         for task in spawn {
-            let alias = ctxt.spawn.entry(task.clone()).or_insert_with(|| mk_ident());
-            let inputs = &app.tasks[task].inputs;
-            let ty = tuple_ty(inputs);
-            let pats = tuple_pat(inputs);
+            if ctxt.spawn_fn.contains_key(task) {
+                continue;
+            }
 
-            let instant = if kind.is_idle() {
-                quote!(rtfm::Instant::now())
-            } else {
-                quote!(self.#baseline)
-            };
-            methods.push(quote!(
-                #[allow(unsafe_code)]
-                #[inline]
-                fn #task(&self, #(#inputs,)*) -> Result<(), #ty> {
-                    unsafe { #alias(#instant, &self.#priority, #pats) }
-                }
-            ));
+            ctxt.spawn_fn.insert(task.clone(), mk_ident());
         }
 
         if kind.is_idle() {
             items.push(quote!(
-                let spawn = {
-                    struct Spawn<'a> {
-                        #priority: &'a core::cell::Cell<u8>,
-                    }
-
-                    impl<'a> Spawn<'a> {
-                        #(#methods)*
-                    }
-
-                    Spawn { #priority }
-                };
-            ))
+                let spawn = #module::Spawn { #priority };
+            ));
         } else {
+            let baseline = &ctxt.baseline;
             items.push(quote!(
-                let spawn = {
-                    struct Spawn<'a> {
-                        #baseline: rtfm::Instant,
-                        #priority: &'a core::cell::Cell<u8>,
-                    }
-
-                    impl<'a> Spawn<'a> {
-                        #(#methods)*
-                    }
-
-                    Spawn { #baseline, #priority }
-                };
-            ))
+                let spawn = #module::Spawn { #priority, #baseline };
+            ));
         }
     }
 
     if !schedule.is_empty() {
-        let mut methods = vec![];
+        // Populate `schedule_fn`
         for task in schedule {
-            let alias = ctxt
-                .schedule
-                .entry(task.clone())
-                .or_insert_with(|| mk_ident());
-            let inputs = &app.tasks[task].inputs;
-            let ty = tuple_ty(inputs);
-            let pats = tuple_pat(inputs);
+            if ctxt.schedule_fn.contains_key(task) {
+                continue;
+            }
 
-            methods.push(quote!(
-                #[inline]
-                fn #task(
-                    &self,
-                    instant: rtfm::Instant,
-                    #(#inputs,)*
-                ) -> Result<(), #ty> {
-                    unsafe { #alias(&self.#priority, instant, #pats) }
-                }
-            ));
+            ctxt.schedule_fn.insert(task.clone(), mk_ident());
         }
 
         items.push(quote!(
             use rtfm::U32Ext;
 
-            let schedule = {
-                struct Schedule<'a> {
-                    #priority: &'a core::cell::Cell<u8>,
-                }
-
-                impl<'a> Schedule<'a> {
-                    #(#methods)*
-                }
-
-                Schedule { #priority }
-            };
-        ))
+            let schedule = #module::Schedule { #priority };
+        ));
     }
 
     if items.is_empty() {
@@ -647,11 +668,20 @@ fn idle(
             analysis,
         );
 
+        let module = module(
+            ctxt,
+            Kind::Idle,
+            !idle.args.schedule.is_empty(),
+            !idle.args.spawn.is_empty(),
+        );
+
         let idle = &ctxt.idle;
 
         let name = format!("idle::{}", idle);
         (
             quote!(
+                #module
+
                 #(#attrs)*
                 #[export_name = #name]
                 fn #idle() -> ! {
@@ -683,7 +713,7 @@ fn exceptions(ctxt: &mut Context, app: &App, analysis: &Analysis) -> Vec<proc_ma
 
             let prelude = prelude(
                 ctxt,
-                Kind::Task,
+                Kind::Exception(ident.clone()),
                 &exception.args.resources,
                 &exception.args.spawn,
                 &exception.args.schedule,
@@ -692,9 +722,19 @@ fn exceptions(ctxt: &mut Context, app: &App, analysis: &Analysis) -> Vec<proc_ma
                 analysis,
             );
 
+            let module = module(
+                ctxt,
+                Kind::Exception(ident.clone()),
+                !exception.args.schedule.is_empty(),
+                !exception.args.spawn.is_empty(),
+            );
+
             let baseline = &ctxt.baseline;
             quote!(
+                #module
+
                 #[rtfm::export::exception]
+                #[doc(hidden)]
                 #(#attrs)*
                 fn #ident() {
                     #(#statics)*
@@ -714,45 +754,58 @@ fn exceptions(ctxt: &mut Context, app: &App, analysis: &Analysis) -> Vec<proc_ma
         .collect()
 }
 
-fn interrupts(ctxt: &mut Context, app: &App, analysis: &Analysis) -> Vec<proc_macro2::TokenStream> {
-    app.interrupts
-        .iter()
-        .map(|(ident, interrupt)| {
-            let attrs = &interrupt.attrs;
-            let statics = &interrupt.statics;
-            let stmts = &interrupt.stmts;
+fn interrupts(
+    ctxt: &mut Context,
+    app: &App,
+    analysis: &Analysis,
+) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+    let mut root = vec![];
+    let mut scoped = vec![];
 
-            let prelude = prelude(
-                ctxt,
-                Kind::Task,
-                &interrupt.args.resources,
-                &interrupt.args.spawn,
-                &interrupt.args.schedule,
-                app,
-                interrupt.args.priority,
-                analysis,
-            );
+    for (ident, interrupt) in &app.interrupts {
+        let attrs = &interrupt.attrs;
+        let statics = &interrupt.statics;
+        let stmts = &interrupt.stmts;
 
-            let baseline = &ctxt.baseline;
-            quote!(
-                #[interrupt]
-                #(#attrs)*
-                fn #ident() {
-                    #(#statics)*
+        let prelude = prelude(
+            ctxt,
+            Kind::Interrupt(ident.clone()),
+            &interrupt.args.resources,
+            &interrupt.args.spawn,
+            &interrupt.args.schedule,
+            app,
+            interrupt.args.priority,
+            analysis,
+        );
 
-                    let #baseline = rtfm::Instant::now();
+        root.push(module(
+            ctxt,
+            Kind::Interrupt(ident.clone()),
+            !interrupt.args.schedule.is_empty(),
+            !interrupt.args.spawn.is_empty(),
+        ));
 
-                    #prelude
+        let baseline = &ctxt.baseline;
+        scoped.push(quote!(
+            #[interrupt]
+            #(#attrs)*
+            fn #ident() {
+                #(#statics)*
 
-                    #[allow(unused_variables)]
-                    let start = #baseline;
+                let #baseline = rtfm::Instant::now();
 
-                    rtfm::export::run(move || {
-                        #(#stmts)*
-                    })
+                #prelude
+
+                #[allow(unused_variables)]
+                let start = #baseline;
+
+                rtfm::export::run(move || {
+                    #(#stmts)*
                 })
-        })
-        .collect()
+            }));
+    }
+
+    (quote!(#(#root)*), quote!(#(#scoped)*))
 }
 
 fn tasks(ctxt: &mut Context, app: &App, analysis: &Analysis) -> proc_macro2::TokenStream {
@@ -770,7 +823,7 @@ fn tasks(ctxt: &mut Context, app: &App, analysis: &Analysis) -> proc_macro2::Tok
 
         let prelude = prelude(
             ctxt,
-            Kind::Task,
+            Kind::Task(name.clone()),
             &task.args.resources,
             &task.args.spawn,
             &task.args.schedule,
@@ -793,7 +846,7 @@ fn tasks(ctxt: &mut Context, app: &App, analysis: &Analysis) -> proc_macro2::Tok
             app,
         );
 
-        let baseline = &ctxt.baseline;
+        let baseline = ctxt.baseline.clone();
         let task_symbol = format!("{}::{}", name, task_alias);
         let scheduleds_symbol = format!("{}::SCHEDULED_TIMES::{}", name, scheduleds_alias);
         let inputs_symbol = format!("{}::INPUTS::{}", name, inputs_alias);
@@ -828,6 +881,13 @@ fn tasks(ctxt: &mut Context, app: &App, analysis: &Analysis) -> proc_macro2::Tok
 
                 #(#stmts)*
             }
+        ));
+
+        items.push(module(
+            ctxt,
+            Kind::Task(name.clone()),
+            !task.args.schedule.is_empty(),
+            !task.args.spawn.is_empty(),
         ));
 
         ctxt.scheduleds.insert(name.clone(), scheduleds_alias);
@@ -925,10 +985,11 @@ fn dispatchers(
 fn spawn(ctxt: &Context, app: &App, analysis: &Analysis) -> proc_macro2::TokenStream {
     let mut items = vec![];
 
+    // Generate `spawn` functions
     let device = &app.args.device;
     let priority = &ctxt.priority;
     let baseline = &ctxt.baseline;
-    for (task, alias) in &ctxt.spawn {
+    for (task, alias) in &ctxt.spawn_fn {
         let free = &ctxt.free_queues[task];
         let level = app.tasks[task].args.priority;
         let ready = &ctxt.ready_queues[&level];
@@ -972,15 +1033,52 @@ fn spawn(ctxt: &Context, app: &App, analysis: &Analysis) -> proc_macro2::TokenSt
         ))
     }
 
+    // Generate `spawn` structs; these call the `spawn` functions generated above
+    for (name, spawn) in app.spawn_callers() {
+        if spawn.is_empty() {
+            continue;
+        }
+
+        let mut is_idle = name.to_string() == "idle";
+
+        let mut methods = vec![];
+        for task in spawn {
+            let alias = &ctxt.spawn_fn[task];
+            let inputs = &app.tasks[task].inputs;
+            let ty = tuple_ty(inputs);
+            let pats = tuple_pat(inputs);
+
+            let instant = if is_idle {
+                quote!(rtfm::Instant::now())
+            } else {
+                quote!(self.#baseline)
+            };
+            methods.push(quote!(
+                #[allow(unsafe_code)]
+                #[inline]
+                pub fn #task(&self, #(#inputs,)*) -> Result<(), #ty> {
+                    unsafe { #alias(#instant, &self.#priority, #pats) }
+                }
+            ));
+        }
+
+        items.push(quote!(
+            impl<'a> #name::Spawn<'a> {
+                #(#methods)*
+            }
+        ));
+    }
+
     quote!(#(#items)*)
 }
 
 fn schedule(ctxt: &Context, app: &App) -> proc_macro2::TokenStream {
     let mut items = vec![];
 
+    // Generate `schedule` functions
     let priority = &ctxt.priority;
     let timer_queue = &ctxt.timer_queue;
-    for (task, alias) in &ctxt.schedule {
+    for (task, alias) in &ctxt.schedule_fn {
         let free = &ctxt.free_queues[task];
         let enum_ = &ctxt.schedule_enum;
         let inputs = &ctxt.inputs[task];
@@ -1021,6 +1119,40 @@ fn schedule(ctxt: &Context, app: &App) -> proc_macro2::TokenStream {
                 }
             }
         ))
+    }
+
+    // Generate `Schedule` structs; these call the `schedule` functions generated above
+    for (name, schedule) in app.schedule_callers() {
+        if schedule.is_empty() {
+            continue;
+        }
+
+        debug_assert!(!schedule.is_empty());
+
+        let mut methods = vec![];
+        for task in schedule {
+            let alias = &ctxt.schedule_fn[task];
+            let inputs = &app.tasks[task].inputs;
+            let ty = tuple_ty(inputs);
+            let pats = tuple_pat(inputs);
+
+            methods.push(quote!(
+                #[inline]
+                pub fn #task(
+                    &self,
+                    instant: rtfm::Instant,
+                    #(#inputs,)*
+                ) -> Result<(), #ty> {
+                    unsafe { #alias(&self.#priority, instant, #pats) }
+                }
+            ));
+        }
+
+        items.push(quote!(
+            impl<'a> #name::Schedule<'a> {
+                #(#methods)*
+            }
+        ));
     }
 
     quote!(#(#items)*)
@@ -1087,6 +1219,7 @@ fn timer_queue(ctxt: &Context, app: &App, analysis: &Analysis) -> proc_macro2::T
     let logical_prio = analysis.timer_queue.priority;
     items.push(quote!(
         #[rtfm::export::exception]
+        #[doc(hidden)]
         unsafe fn SysTick() {
             use rtfm::Mutex;
 
@@ -1309,14 +1442,24 @@ fn tuple_ty(inputs: &[ArgCaptured]) -> proc_macro2::TokenStream {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 enum Kind {
-    Init,
+    Exception(Ident),
     Idle,
-    Task,
+    Init,
+    Interrupt(Ident),
+    Task(Ident),
 }
 
 impl Kind {
+    fn ident(&self) -> Ident {
+        match self {
+            Kind::Init => Ident::new("init", Span::call_site()),
+            Kind::Idle => Ident::new("idle", Span::call_site()),
+            Kind::Task(name) | Kind::Interrupt(name) | Kind::Exception(name) => name.clone(),
+        }
+    }
+
     fn is_idle(&self) -> bool {
         *self == Kind::Idle
     }

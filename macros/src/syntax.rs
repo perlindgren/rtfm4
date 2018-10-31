@@ -341,6 +341,68 @@ impl App {
                     .map(move |s| (Some(t.args.priority), s))
             }))
     }
+
+    pub fn schedule_callers(&self) -> impl Iterator<Item = (Ident, &Idents)> {
+        self.idle
+            .as_ref()
+            .map(|idle| -> Box<Iterator<Item = _>> {
+                Box::new(iter::once((
+                    Ident::new("idle", Span::call_site()),
+                    &idle.args.schedule,
+                )))
+            })
+            .unwrap_or_else(|| Box::new(iter::empty()))
+            .chain(iter::once((
+                Ident::new("init", Span::call_site()),
+                &self.init.args.schedule,
+            )))
+            .chain(
+                self.exceptions
+                    .iter()
+                    .map(|(name, exception)| (name.clone(), &exception.args.schedule)),
+            )
+            .chain(
+                self.interrupts
+                    .iter()
+                    .map(|(name, interrupt)| (name.clone(), &interrupt.args.schedule)),
+            )
+            .chain(
+                self.tasks
+                    .iter()
+                    .map(|(name, task)| (name.clone(), &task.args.schedule)),
+            )
+    }
+
+    pub fn spawn_callers(&self) -> impl Iterator<Item = (Ident, &Idents)> {
+        self.idle
+            .as_ref()
+            .map(|idle| -> Box<Iterator<Item = _>> {
+                Box::new(iter::once((
+                    Ident::new("idle", Span::call_site()),
+                    &idle.args.spawn,
+                )))
+            })
+            .unwrap_or_else(|| Box::new(iter::empty()))
+            .chain(iter::once((
+                Ident::new("init", Span::call_site()),
+                &self.init.args.spawn,
+            )))
+            .chain(
+                self.exceptions
+                    .iter()
+                    .map(|(name, exception)| (name.clone(), &exception.args.spawn)),
+            )
+            .chain(
+                self.interrupts
+                    .iter()
+                    .map(|(name, interrupt)| (name.clone(), &interrupt.args.spawn)),
+            )
+            .chain(
+                self.tasks
+                    .iter()
+                    .map(|(name, task)| (name.clone(), &task.args.spawn)),
+            )
+    }
 }
 
 pub type Idents = HashSet<Ident>;
