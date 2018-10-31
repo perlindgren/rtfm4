@@ -1,0 +1,19 @@
+[package]
+name = "cortex-m-rtfm-macros"
+version = "0.1.0"
+authors = ["Jorge Aparicio <jorge@japaric.io>"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "0.6.8"
+proc-macro2 = "0.4.20"
+
+[dependencies.syn]
+features = ["extra-traits", "full"]
+version = "0.15.6"
+
+[dependencies.rand]
+default-features = false
+version = "0.5.5"
