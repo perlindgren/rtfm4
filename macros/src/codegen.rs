@@ -36,7 +36,6 @@ pub struct Context {
     // Dispatcher -> Alias (`static` / resource)
     ready_queues: HashMap<u8, Ident>,
     // For non-singletons this maps the resource name to its `static mut` variable name
-    // For singletons this maps the resource name to the proxy struct name
     resources: Aliases,
     // Task -> Alias (`static`)
     scheduleds: Aliases,
@@ -170,6 +169,7 @@ pub fn app(app: &App, analysis: &Analysis) -> TokenStream {
 
 fn resources(ctxt: &mut Context, app: &App, analysis: &Analysis) -> proc_macro2::TokenStream {
     let mut items = vec![];
+    let mut module = vec![];
     for (name, res) in &app.resources {
         let attrs = &res.attrs;
         let mut_ = &res.mutability;
@@ -179,18 +179,19 @@ fn resources(ctxt: &mut Context, app: &App, analysis: &Analysis) -> proc_macro2:
         if res.singleton {
             items.push(quote!(
                 #(#attrs)*
-                static #mut_ #name: #ty = #expr;
+                pub static #mut_ #name: #ty = #expr;
             ));
 
             let alias = mk_ident();
             if let Some(Ownership::Shared { ceiling }) = analysis.ownerships.get(name) {
                 items.push(mk_resource(
                     ctxt,
-                    &alias,
+                    name,
                     quote!(#name),
                     *ceiling,
                     quote!(&mut <#name as owned_singleton::Singleton>::new()),
                     app,
+                    Some(&mut module),
                 ))
             }
 
@@ -226,12 +227,28 @@ fn resources(ctxt: &mut Context, app: &App, analysis: &Analysis) -> proc_macro2:
                         quote!(unsafe { &mut #alias })
                     };
 
-                    items.push(mk_resource(ctxt, name, quote!(#ty), *ceiling, ptr, app))
+                    items.push(mk_resource(
+                        ctxt,
+                        name,
+                        quote!(#ty),
+                        *ceiling,
+                        ptr,
+                        app,
+                        Some(&mut module),
+                    ));
                 }
             }
 
             ctxt.resources.insert(name.clone(), alias);
         }
+    }
+
+    if !module.is_empty() {
+        items.push(quote!(
+            /// Resources
+            pub mod resources {
+                #(#module)*
+            }));
     }
 
     quote!(#(#items)*)
@@ -517,7 +534,6 @@ fn prelude(
                 if ownership.needs_lock(logical_prio) {
                     may_call_lock = true;
                     if singleton {
-                        let alias = &ctxt.resources[name];
                         if mut_.is_none() {
                             needs_unsafe = true;
                             defs.push(quote!(#name: &'a #name));
@@ -526,8 +542,8 @@ fn prelude(
                             continue;
                         } else {
                             // Generate a resource proxy
-                            defs.push(quote!(#name: #alias<'a>));
-                            exprs.push(quote!(#name: #alias { #priority }));
+                            defs.push(quote!(#name: resources::#name<'a>));
+                            exprs.push(quote!(#name: resources::#name { #priority }));
                             continue;
                         }
                     } else {
@@ -535,8 +551,8 @@ fn prelude(
                             defs.push(quote!(#name: &'a #ty));
                         } else {
                             // Generate a resource proxy
-                            defs.push(quote!(#name: #name<'a>));
-                            exprs.push(quote!(#name: #name { #priority }));
+                            defs.push(quote!(#name: resources::#name<'a>));
+                            exprs.push(quote!(#name: resources::#name { #priority }));
                             continue;
                         }
                     }
@@ -844,6 +860,7 @@ fn tasks(ctxt: &mut Context, app: &App, analysis: &Analysis) -> proc_macro2::Tok
             *analysis.free_queues.get(name).unwrap_or(&0),
             quote!(#free_alias.get_mut()),
             app,
+            None,
         );
 
         let baseline = ctxt.baseline.clone();
@@ -924,6 +941,7 @@ fn dispatchers(
             ceiling,
             quote!(#ready_alias.get_mut()),
             app,
+            None,
         );
         data.push(quote!(
             #[allow(dead_code)]
@@ -1192,6 +1210,7 @@ fn timer_queue(ctxt: &Context, app: &App, analysis: &Analysis) -> proc_macro2::T
         analysis.timer_queue.ceiling,
         quote!(#tq.get_mut()),
         app,
+        None,
     ));
 
     let priority = &ctxt.priority;
@@ -1312,14 +1331,36 @@ fn mk_resource(
     ceiling: u8,
     ptr: proc_macro2::TokenStream,
     app: &App,
+    module: Option<&mut Vec<proc_macro2::TokenStream>>,
 ) -> proc_macro2::TokenStream {
     let priority = &ctxt.priority;
     let device = &app.args.device;
 
-    quote!(
-        struct #struct_<'a> { #priority: &'a core::cell::Cell<u8>}
+    let mut items = vec![];
 
-        unsafe impl<'a> rtfm::Mutex for #struct_<'a> {
+    let path = if let Some(module) = module {
+        let doc = ty.to_string();
+        module.push(quote!(
+            #[doc = #doc]
+            pub struct #struct_<'a> {
+                #[doc(hidden)]
+                pub #priority: &'a core::cell::Cell<u8>,
+            }
+        ));
+
+        quote!(resources::#struct_)
+    } else {
+        items.push(quote!(
+            struct #struct_<'a> {
+                #priority: &'a core::cell::Cell<u8>,
+            }
+        ));
+
+        quote!(#struct_)
+    };
+
+    items.push(quote!(
+        unsafe impl<'a> rtfm::Mutex for #path<'a> {
             const CEILING: u8 = #ceiling;
             const NVIC_PRIO_BITS: u8 = #device::NVIC_PRIO_BITS;
             type Data = #ty;
@@ -1334,7 +1375,9 @@ fn mk_resource(
                 unsafe { #ptr }
             }
         }
-    )
+    ));
+
+    quote!(#(#items)*)
 }
 
 fn mk_capacity_literal(capacity: u8) -> LitInt {
