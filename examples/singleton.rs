@@ -7,10 +7,10 @@
 
 extern crate panic_semihosting;
 
+use alloc_singleton::stable::pool::{Box, Pool};
 use cortex_m_semihosting::debug;
 use lm3s6965::Interrupt;
 use rtfm::app;
-use singleton_pool::stable::{Box, Pool};
 
 macro_rules! println {
     ($($tt:tt)*) => {
