@@ -154,10 +154,13 @@ impl App {
                     } else if let Some(pos) =
                         item.attrs.iter().position(|attr| eq(attr, "exception"))
                     {
-                        if exceptions.contains_key(&item.ident) {
+                        if exceptions.contains_key(&item.ident)
+                            || interrupts.contains_key(&item.ident)
+                            || tasks.contains_key(&item.ident)
+                        {
                             return Err(parse::Error::new(
                                 item.ident.span(),
-                                "this `#[exception]` handler is listed twice",
+                                "this task is defined multiple times",
                             ));
                         }
 
@@ -167,10 +170,13 @@ impl App {
                     } else if let Some(pos) =
                         item.attrs.iter().position(|attr| eq(attr, "interrupt"))
                     {
-                        if interrupts.contains_key(&item.ident) {
+                        if exceptions.contains_key(&item.ident)
+                            || interrupts.contains_key(&item.ident)
+                            || tasks.contains_key(&item.ident)
+                        {
                             return Err(parse::Error::new(
                                 item.ident.span(),
-                                "this `#[interrupt]` handler is listed twice",
+                                "this task is defined multiple times",
                             ));
                         }
 
@@ -178,10 +184,13 @@ impl App {
 
                         interrupts.insert(item.ident.clone(), Interrupt::check(args, item)?);
                     } else if let Some(pos) = item.attrs.iter().position(|attr| eq(attr, "task")) {
-                        if tasks.contains_key(&item.ident) {
+                        if exceptions.contains_key(&item.ident)
+                            || interrupts.contains_key(&item.ident)
+                            || tasks.contains_key(&item.ident)
+                        {
                             return Err(parse::Error::new(
                                 item.ident.span(),
-                                "this `#[task]` is listed twice",
+                                "this task is defined multiple times",
                             ));
                         }
 
