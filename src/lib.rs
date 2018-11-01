@@ -8,9 +8,12 @@
 #![deny(warnings)]
 #![no_std]
 
-use core::u8;
-use core::{cell::Cell, cmp::Ordering, ops};
+use core::{cell::Cell, u8};
+#[cfg(feature = "timer-queue")]
+use core::{cmp::Ordering, ops};
 
+#[cfg(not(feature = "timer-queue"))]
+use cortex_m::peripheral::SYST;
 #[cfg(armv7m)]
 use cortex_m::register::basepri;
 use cortex_m::{
@@ -22,6 +25,7 @@ pub use cortex_m_rtfm_macros::app;
 #[doc(hidden)]
 pub mod export;
 #[doc(hidden)]
+#[cfg(feature = "timer-queue")]
 mod tq;
 
 /// Core peripherals
@@ -36,10 +40,17 @@ pub struct Peripherals<'a> {
     pub CPUID: CPUID,
 
     /// Debug Control Block
+    #[cfg(feature = "timer-queue")]
     pub DCB: &'a mut DCB,
 
-    // Data Watchpoint and Trace unit
-    // pub DWT: DWT,
+    /// Debug Control Block (borrowed if the `timer-queue` is enabled)
+    #[cfg(not(feature = "timer-queue"))]
+    pub DCB: DCB,
+
+    /// Data Watchpoint and Trace unit (not present if the `timer-queue` is enabled)
+    #[cfg(not(feature = "timer-queue"))]
+    pub DWT: DWT,
+
     /// Flash Patch and Breakpoint unit (not present on Cortex-M0 variants)
     pub FPB: FPB,
 
@@ -57,16 +68,22 @@ pub struct Peripherals<'a> {
     /// System Control Block
     pub SCB: &'a mut SCB,
 
-    // SysTick: System Timer
-    // pub SYST: SYST,
+    /// SysTick: System Timer (not present if the `timer-queue` is enabled)
+    #[cfg(not(feature = "timer-queue"))]
+    pub SYST: SYST,
+
     /// Trace Port Interface Unit (not present on Cortex-M0 variants)
     pub TPIU: TPIU,
 }
 
 /// A measurement of a monotonically nondecreasing clock. Opaque and useful only with `Duration`
+///
+/// This data type is only available when the `timer-queue` feature is enabled
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(feature = "timer-queue")]
 pub struct Instant(i32);
 
+#[cfg(feature = "timer-queue")]
 impl Instant {
     /// IMPLEMENTATION DETAIL. DO NOT USE
     #[doc(hidden)]
@@ -92,6 +109,7 @@ impl Instant {
     }
 }
 
+#[cfg(feature = "timer-queue")]
 impl ops::AddAssign<Duration> for Instant {
     fn add_assign(&mut self, dur: Duration) {
         debug_assert!(dur.0 < (1 << 31));
@@ -99,6 +117,7 @@ impl ops::AddAssign<Duration> for Instant {
     }
 }
 
+#[cfg(feature = "timer-queue")]
 impl ops::Add<Duration> for Instant {
     type Output = Self;
 
@@ -108,6 +127,7 @@ impl ops::Add<Duration> for Instant {
     }
 }
 
+#[cfg(feature = "timer-queue")]
 impl ops::SubAssign<Duration> for Instant {
     fn sub_assign(&mut self, dur: Duration) {
         // XXX should this be a non-debug assertion?
@@ -116,6 +136,7 @@ impl ops::SubAssign<Duration> for Instant {
     }
 }
 
+#[cfg(feature = "timer-queue")]
 impl ops::Sub<Duration> for Instant {
     type Output = Self;
 
@@ -125,6 +146,7 @@ impl ops::Sub<Duration> for Instant {
     }
 }
 
+#[cfg(feature = "timer-queue")]
 impl ops::Sub<Instant> for Instant {
     type Output = Duration;
 
@@ -133,12 +155,14 @@ impl ops::Sub<Instant> for Instant {
     }
 }
 
+#[cfg(feature = "timer-queue")]
 impl Ord for Instant {
     fn cmp(&self, rhs: &Self) -> Ordering {
         self.0.wrapping_sub(rhs.0).cmp(&0)
     }
 }
 
+#[cfg(feature = "timer-queue")]
 impl PartialOrd for Instant {
     fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
         Some(self.cmp(rhs))
@@ -146,15 +170,20 @@ impl PartialOrd for Instant {
 }
 
 /// A `Duration` type to represent a span of time.
+///
+/// This data type is only available when the `timer-queue` feature is enabled
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg(feature = "timer-queue")]
 pub struct Duration(u32);
 
+#[cfg(feature = "timer-queue")]
 impl ops::AddAssign for Duration {
     fn add_assign(&mut self, dur: Duration) {
         self.0 += dur.0;
     }
 }
 
+#[cfg(feature = "timer-queue")]
 impl ops::Add<Duration> for Duration {
     type Output = Self;
 
@@ -163,12 +192,14 @@ impl ops::Add<Duration> for Duration {
     }
 }
 
+#[cfg(feature = "timer-queue")]
 impl ops::SubAssign for Duration {
     fn sub_assign(&mut self, rhs: Duration) {
         self.0 -= rhs.0;
     }
 }
 
+#[cfg(feature = "timer-queue")]
 impl ops::Sub<Duration> for Duration {
     type Output = Self;
 
@@ -178,11 +209,15 @@ impl ops::Sub<Duration> for Duration {
 }
 
 /// Adds the `cycles` method to the `u32` type
+///
+/// This trait is only available when the `timer-queue` feature is enabled
+#[cfg(feature = "timer-queue")]
 pub trait U32Ext {
     /// Converts the `u32` value into number of.cycles
     fn cycles(self) -> Duration;
 }
 
+#[cfg(feature = "timer-queue")]
 impl U32Ext for u32 {
     fn cycles(self) -> Duration {
         Duration(self)

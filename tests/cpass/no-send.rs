@@ -1,4 +1,5 @@
 //! `Send` is not required for messages between cooperative (same priority) tasks
+#![feature(extern_crate_item_prelude)] // ???
 #![no_main]
 #![no_std]
 
@@ -10,7 +11,7 @@ use core::marker::PhantomData;
 
 use rtfm::app;
 
-struct NotSend {
+pub struct NotSend {
     _0: PhantomData<*const ()>,
 }
 

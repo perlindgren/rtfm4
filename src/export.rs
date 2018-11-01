@@ -11,6 +11,7 @@ pub use cortex_m_rt::{entry, exception};
 pub use heapless::consts;
 use heapless::spsc::Queue;
 
+#[cfg(feature = "timer-queue")]
 pub use crate::tq::{isr as sys_tick, NotReady, TimerQueue};
 
 pub type FreeQueue<N> = Queue<u8, N>;

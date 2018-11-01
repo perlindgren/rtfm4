@@ -308,6 +308,7 @@ impl App {
     ///
     /// Each spawn call includes the priority of the task from which it's issued and the name of the
     /// task that's spawned. A task may appear more that once in this iterator.
+    #[allow(dead_code)]
     pub fn schedule_calls(&self) -> impl Iterator<Item = (Option<u8>, &Ident)> {
         self.init
             .args
@@ -342,6 +343,7 @@ impl App {
             }))
     }
 
+    #[allow(dead_code)]
     pub fn schedule_callers(&self) -> impl Iterator<Item = (Ident, &Idents)> {
         self.idle
             .as_ref()
@@ -482,6 +484,13 @@ impl Parse for InitArgs {
 
             let ident_s = ident.to_string();
             match &*ident_s {
+                "schedule" if cfg!(not(feature = "timer-queue")) => {
+                    return Err(parse::Error::new(
+                        ident.span(),
+                        "The `schedule` API requires that the `timer-queue` feature is \
+                         enabled in the `cortex-m-rtfm` crate",
+                    ));
+                }
                 "resources" | "schedule" | "spawn" => {} // OK
                 _ => {
                     return Err(parse::Error::new(
@@ -789,6 +798,13 @@ fn parse_args(input: ParseStream, accept_capacity: bool) -> parse::Result<TaskAr
                 }
 
                 priority = Some(value as u8);
+            }
+            "schedule" if cfg!(not(feature = "timer-queue")) => {
+                return Err(parse::Error::new(
+                    ident.span(),
+                    "The `schedule` API requires that the `timer-queue` feature is \
+                     enabled in the `cortex-m-rtfm` crate",
+                ));
             }
             "resources" | "schedule" | "spawn" => {
                 // .. [#(#idents)*]
