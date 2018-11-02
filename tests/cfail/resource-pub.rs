@@ -9,6 +9,9 @@ use rtfm::app;
 
 #[app(device = lm3s6965)]
 const APP: () = {
-    #[init(spawn = [X])] //~ ERROR this task has NOT been declared
+    pub static mut X: u32 = 0;
+    //~^ ERROR resources must have inherited / private visibility
+
+    #[init]
     fn init() {}
 };

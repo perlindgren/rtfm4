@@ -11,8 +11,8 @@ use syn::{
     spanned::Spanned,
     token::Brace,
     ArgCaptured, AttrStyle, Attribute, Expr, FnArg, ForeignItem, Ident, IntSuffix, Item, ItemFn,
-    ItemForeignMod, ItemStatic, LitInt, Path, PathArguments, PathSegment, Stmt, Token, Type,
-    TypeTuple,
+    ItemForeignMod, ItemStatic, LitInt, Path, PathArguments, PathSegment, ReturnType, Stmt, Token,
+    Type, TypeTuple, Visibility,
 };
 
 pub struct AppArgs {
@@ -441,7 +441,24 @@ pub type IdleArgs = InitArgs;
 
 impl Idle {
     fn check(args: IdleArgs, item: ItemFn) -> parse::Result<Self> {
-        // TODO sanity check `item`
+        let valid_signature = item.vis == Visibility::Inherited
+            && item.constness.is_none()
+            && item.asyncness.is_none()
+            && item.abi.is_none()
+            && item.decl.generics.params.is_empty()
+            && item.decl.generics.where_clause.is_none()
+            && item.decl.inputs.is_empty()
+            && item.decl.variadic.is_none()
+            && is_bottom(&item.decl.output);
+
+        let span = item.span();
+
+        if !valid_signature {
+            return Err(parse::Error::new(
+                span,
+                "`idle` must have type signature `[unsafe] fn() -> !`",
+            ));
+        }
 
         let (statics, stmts) = extract_statics(item.block.stmts);
 
@@ -590,7 +607,24 @@ pub struct Init {
 
 impl Init {
     fn check(args: InitArgs, item: ItemFn) -> parse::Result<Self> {
-        // TODO sanity check `item`
+        let valid_signature = item.vis == Visibility::Inherited
+            && item.constness.is_none()
+            && item.asyncness.is_none()
+            && item.abi.is_none()
+            && item.decl.generics.params.is_empty()
+            && item.decl.generics.where_clause.is_none()
+            && item.decl.inputs.is_empty()
+            && item.decl.variadic.is_none()
+            && is_unit(&item.decl.output);
+
+        let span = item.span();
+
+        if !valid_signature {
+            return Err(parse::Error::new(
+                span,
+                "`init` must have type signature `[unsafe] fn()`",
+            ));
+        }
 
         let (statics, stmts) = extract_statics(item.block.stmts);
         let (stmts, assigns) = extract_assignments(stmts);
@@ -642,7 +676,24 @@ impl Parse for ExceptionArgs {
 
 impl Exception {
     fn check(args: ExceptionArgs, item: ItemFn) -> parse::Result<Self> {
-        // TODO sanity check `item`
+        let valid_signature = item.vis == Visibility::Inherited
+            && item.constness.is_none()
+            && item.asyncness.is_none()
+            && item.abi.is_none()
+            && item.decl.generics.params.is_empty()
+            && item.decl.generics.where_clause.is_none()
+            && item.decl.inputs.is_empty()
+            && item.decl.variadic.is_none()
+            && is_unit(&item.decl.output);
+
+        let span = item.span();
+
+        if !valid_signature {
+            return Err(parse::Error::new(
+                span,
+                "`exception` handlers must have type signature `[unsafe] fn()`",
+            ));
+        }
 
         let (statics, stmts) = extract_statics(item.block.stmts);
 
@@ -666,7 +717,24 @@ pub type InterruptArgs = ExceptionArgs;
 
 impl Interrupt {
     fn check(args: InterruptArgs, item: ItemFn) -> parse::Result<Self> {
-        // TODO sanity check `item`
+        let valid_signature = item.vis == Visibility::Inherited
+            && item.constness.is_none()
+            && item.asyncness.is_none()
+            && item.abi.is_none()
+            && item.decl.generics.params.is_empty()
+            && item.decl.generics.where_clause.is_none()
+            && item.decl.inputs.is_empty()
+            && item.decl.variadic.is_none()
+            && is_unit(&item.decl.output);
+
+        let span = item.span();
+
+        if !valid_signature {
+            return Err(parse::Error::new(
+                span,
+                "`interrupt` handlers must have type signature `[unsafe] fn()`",
+            ));
+        }
 
         let (statics, stmts) = extract_statics(item.block.stmts);
 
@@ -689,7 +757,12 @@ pub struct Resource {
 
 impl Resource {
     fn check(mut item: ItemStatic) -> parse::Result<Resource> {
-        // TODO sanity check `item`
+        if item.vis != Visibility::Inherited {
+            return Err(parse::Error::new(
+                item.span(),
+                "resources must have inherited / private visibility",
+            ));
+        }
 
         let uninitialized = match *item.expr {
             Expr::Tuple(ref tuple) => tuple.elems.is_empty(),
@@ -900,7 +973,6 @@ impl Static {
     fn parse(items: Vec<ItemStatic>) -> parse::Result<HashMap<Ident, Static>> {
         let mut statics = HashMap::new();
 
-        // TODO sanity check `item`
         for item in items {
             if statics.contains_key(&item.ident) {
                 return Err(parse::Error::new(
@@ -933,9 +1005,24 @@ pub struct Task {
 
 impl Task {
     fn check(args: TaskArgs, item: ItemFn) -> parse::Result<Self> {
-        // TODO sanity check `item`
+        let valid_signature = item.vis == Visibility::Inherited
+            && item.constness.is_none()
+            && item.asyncness.is_none()
+            && item.abi.is_none()
+            && item.decl.generics.params.is_empty()
+            && item.decl.generics.where_clause.is_none()
+            && item.decl.variadic.is_none()
+            && is_unit(&item.decl.output);
 
         let span = item.span();
+
+        if !valid_signature {
+            return Err(parse::Error::new(
+                span,
+                "`task` handlers must have type signature `[unsafe] fn(..)`",
+            ));
+        }
+
         let (statics, stmts) = extract_statics(item.block.stmts);
 
         let mut inputs = vec![];
@@ -970,7 +1057,19 @@ impl FreeInterrupt {
 
         for item in mod_.items {
             if let ForeignItem::Fn(f) = item {
-                // TODO check function signature, etc
+                let valid_signature = f.vis == Visibility::Inherited
+                    && f.decl.generics.params.is_empty()
+                    && f.decl.generics.where_clause.is_none()
+                    && f.decl.inputs.is_empty()
+                    && f.decl.variadic.is_none()
+                    && is_unit(&f.decl.output);
+
+                if !valid_signature {
+                    return Err(parse::Error::new(
+                        f.span(),
+                        "free interrupts must have type signature `fn()`",
+                    ));
+                }
 
                 if free_interrupts.contains_key(&f.ident) {
                     return Err(parse::Error::new(
@@ -1058,4 +1157,28 @@ fn extract_assignments(stmts: Vec<Stmt>) -> (Vec<Stmt>, Vec<Assign>) {
     stmts.extend(istmts);
 
     (stmts.into_iter().rev().collect(), assigns)
+}
+
+fn is_bottom(ty: &ReturnType) -> bool {
+    if let ReturnType::Type(_, ty) = ty {
+        if let Type::Never(_) = **ty {
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
+fn is_unit(ty: &ReturnType) -> bool {
+    if let ReturnType::Type(_, ty) = ty {
+        if let Type::Tuple(ref tuple) = **ty {
+            tuple.elems.is_empty()
+        } else {
+            false
+        }
+    } else {
+        true
+    }
 }

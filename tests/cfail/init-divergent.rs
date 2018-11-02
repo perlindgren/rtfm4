@@ -9,6 +9,9 @@ use rtfm::app;
 
 #[app(device = lm3s6965)]
 const APP: () = {
-    #[init(spawn = [X])] //~ ERROR this task has NOT been declared
-    fn init() {}
+    #[init]
+    fn init() -> ! {
+        //~^ ERROR `init` must have type signature `[unsafe] fn()`
+        loop {}
+    }
 };

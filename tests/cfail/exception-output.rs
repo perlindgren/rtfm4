@@ -9,6 +9,12 @@ use rtfm::app;
 
 #[app(device = lm3s6965)]
 const APP: () = {
-    #[init(spawn = [X])] //~ ERROR this task has NOT been declared
+    #[init]
     fn init() {}
+
+    #[exception]
+    fn SVCall() -> u32 {
+        //~^ ERROR `exception` handlers must have type signature `[unsafe] fn()`
+        0
+    }
 };

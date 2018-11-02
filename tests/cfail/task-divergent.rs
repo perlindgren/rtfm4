@@ -12,8 +12,11 @@ const APP: () = {
     #[init]
     fn init() {}
 
-    #[interrupt]
-    fn UART0() {} //~ ERROR free interrupts (`extern { .. }`) can't be used as interrupt handlers
+    #[task]
+    fn foo() -> ! {
+        //~^ ERROR `task` handlers must have type signature `[unsafe] fn(..)`
+        loop {}
+    }
 
     extern "C" {
         fn UART0();

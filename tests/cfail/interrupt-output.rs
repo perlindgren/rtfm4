@@ -9,6 +9,12 @@ use rtfm::app;
 
 #[app(device = lm3s6965)]
 const APP: () = {
-    #[init(spawn = [X])] //~ ERROR this task has NOT been declared
+    #[init]
     fn init() {}
+
+    #[interrupt]
+    fn UART0() -> u32 {
+        //~^ ERROR `interrupt` handlers must have type signature `[unsafe] fn()`
+        0
+    }
 };
