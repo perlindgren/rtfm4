@@ -2,7 +2,7 @@ set -euxo pipefail
 
 main() {
     rm -f .cargo/config
-    cargo doc
+    cargo doc --features timer-queue
     ( cd book && mdbook build )
 
     local td=$(mktemp -d)

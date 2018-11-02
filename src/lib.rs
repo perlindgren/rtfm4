@@ -1,8 +1,26 @@
 //! Real Time For the Masses (RTFM) framework for ARM Cortex-M microcontrollers
 //!
+//! **IMPORTANT**: This crate is published as [`cortex-m-rtfm`] on crates.io but the name of the
+//! library is `rtfm`.
+//!
+//! [`cortex-m-rtfm`]: https://crates.io/crates/cortex-m-rtfm
+//!
 //! The user level documentation can be found [here].
 //!
 //! [here]: ../../book/index.html
+//!
+//! Don't forget to check the documentation of the [`#[app]`] attribute, which is the main component
+//! of the framework.
+//!
+//! [`#[app]`]: ../cortex_m_rtfm_macros/attr.app.html
+//!
+//! # Cargo features
+//!
+//! - `timer-queue`. This opt-in feature enables the `schedule` API which can be used to schedule
+//! tasks to run in the future. Also see [`Instant`] and [`Duration`].
+//!
+//! [`Instant`]: struct.Instant.html
+//! [`Duration`]: struct.Duration.html
 
 #![deny(missing_docs)]
 #![deny(warnings)]
@@ -31,6 +49,10 @@ mod tq;
 /// Core peripherals
 ///
 /// This is `cortex_m::Peripherals` minus the peripherals that the RTFM runtime uses
+///
+/// - The `NVIC` field is never present.
+/// - When the `timer-queue` feature is enabled the following fields are *not* present: `DWT` and
+/// `SYST`.
 #[allow(non_snake_case)]
 pub struct Peripherals<'a> {
     /// Cache and branch predictor maintenance operations (not present on Cortex-M0 variants)
@@ -39,15 +61,15 @@ pub struct Peripherals<'a> {
     /// CPUID
     pub CPUID: CPUID,
 
-    /// Debug Control Block
+    /// Debug Control Block (by value if the `timer-queue` feature is disabled)
     #[cfg(feature = "timer-queue")]
     pub DCB: &'a mut DCB,
 
-    /// Debug Control Block (borrowed if the `timer-queue` is enabled)
+    /// Debug Control Block (borrowed if the `timer-queue` feature is enabled)
     #[cfg(not(feature = "timer-queue"))]
     pub DCB: DCB,
 
-    /// Data Watchpoint and Trace unit (not present if the `timer-queue` is enabled)
+    /// Data Watchpoint and Trace unit (not present if the `timer-queue` feature is enabled)
     #[cfg(not(feature = "timer-queue"))]
     pub DWT: DWT,
 
@@ -213,7 +235,7 @@ impl ops::Sub<Duration> for Duration {
 /// This trait is only available when the `timer-queue` feature is enabled
 #[cfg(feature = "timer-queue")]
 pub trait U32Ext {
-    /// Converts the `u32` value into number of.cycles
+    /// Converts the `u32` value into clock cycles
     fn cycles(self) -> Duration;
 }
 
@@ -228,9 +250,12 @@ impl U32Ext for u32 {
 ///
 /// In RTFM, locks are implemented as critical sections that prevent other tasks from *starting*.
 /// These critical sections are implemented by temporarily increasing the dynamic priority (see
-/// BASEPRI) of the execution context.
+/// [BASEPRI]) of the execution context.
+///
+/// [BASEPRI]: https://developer.arm.com/products/architecture/cpu-architecture/m-profile/docs/100701/latest/special-purpose-mask-registers
 pub unsafe trait Mutex {
     /// Logical priority ceiling
+    #[doc(hidden)]
     const CEILING: u8;
     #[doc(hidden)]
     const NVIC_PRIO_BITS: u8;
@@ -304,7 +329,8 @@ fn logical2hw(logical: u8, nvic_prio_bits: u8) -> u8 {
 
 /// Sets the given `interrupt` as pending
 ///
-/// This is a convenience function around `NVIC::pend`
+/// This is a convenience function around
+/// [`NVIC::pend`](../cortex-m-/peripheral/struct.NVIC.html#method.pend)
 pub fn pend<I>(interrupt: I)
 where
     I: Nr,
