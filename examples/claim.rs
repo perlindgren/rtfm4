@@ -1,4 +1,4 @@
-//! examples/lock.rs
+//! examples/claim.rs
 
 #![deny(unsafe_code)]
 #![deny(warnings)]
@@ -36,7 +36,7 @@ const APP: () = {
         println!("A");
 
         // the lower priority task requires a critical section to access the data
-        resources.SHARED.lock(|shared| {
+        resources.SHARED.claim(|shared| {
             // data can only be modified within this critical section (closure)
             *shared += 1;
 
@@ -58,6 +58,7 @@ const APP: () = {
 
     #[interrupt(priority = 2, resources = [SHARED])]
     fn GPIOB() {
+        resources.SHARED.claim(|shared| {});
         // the higher priority task does *not* need a critical section
         *resources.SHARED += 1;
 

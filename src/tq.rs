@@ -98,7 +98,7 @@ where
 {
     loop {
         // XXX does `#[inline(always)]` improve performance or not?
-        let next = tq.lock(#[inline(always)]
+        let next = tq.claim(#[inline(always)]
         |tq| {
             if let Some(instant) = tq.queue.peek().map(|p| p.instant) {
                 let diff = instant.0.wrapping_sub(Instant::now().0);

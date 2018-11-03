@@ -34,10 +34,10 @@ mod syntax;
 ///
 /// These variables are used as *resources*. Resources can be owned by tasks or shared between them.
 /// Tasks can get `&mut` (exclusives) references to `static mut` resources, but only `&` (shared)
-/// references to `static` resources. Lower priority tasks will need a [`lock`] to get a `&mut`
+/// references to `static` resources. Lower priority tasks will need a [`claim`] to get a `&mut`
 /// reference to a `static mut` resource shared with higher priority tasks.
 ///
-/// [`lock`]: ../rtfm/trait.Mutex.html#method.lock
+/// [`claim`]: ../rtfm/trait.Mutex.html#method.claim
 ///
 /// `static mut` resources that are shared by tasks that run at *different* priorities need to
 /// implement the [`Send`] trait. Similarly, `static` resources that are shared by tasks that run at

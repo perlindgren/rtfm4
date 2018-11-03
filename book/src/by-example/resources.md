@@ -24,7 +24,8 @@ two handlers.
 
 ``` console
 $ cargo run --example resource
-{{#include ../../../ci/expected/resource.run}}```
+{{#include ../../../ci/expected/resource.run}}
+```
 
 ## Priorities
 
@@ -55,20 +56,21 @@ handlers, that don't contend for the resource, run.
 
 In the example below we have three interrupt handlers with priorities ranging
 from one to three. The two handlers with the lower priorities contend for the
-`SHARED` resource. The lowest priority handler needs to [`lock`] the
+`SHARED` resource. The lowest priority handler needs to [`claim`] the
 `SHARED` resource to access its data, whereas the mid priority handler can
 directly access its data. The highest priority handler is free to preempt
 the critical section created by the lowest priority handler.
 
-[`lock`]: ../../api/rtfm/trait.Mutex.html#method.lock
+[`claim`]: ../../api/rtfm/trait.Mutex.html#method.claim
 
 ``` rust
-{{#include ../../../examples/lock.rs}}
+{{#include ../../../examples/claim.rs}}
 ```
 
 ``` console
-$ cargo run --example lock
-{{#include ../../../ci/expected/lock.run}}```
+$ cargo run --example claim
+{{#include ../../../ci/expected/claim.run}}
+```
 
 ## Late resources
 
@@ -96,5 +98,5 @@ the consumer resource.
 ```
 
 ``` console
-$ cargo run --example lock
+$ cargo run --example late
 {{#include ../../../ci/expected/late.run}}```

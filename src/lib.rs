@@ -273,7 +273,7 @@ pub unsafe trait Mutex {
     /// Creates a critical section and grants temporary access to the protected data
     #[inline(always)]
     #[cfg(armv7m)]
-    fn lock<R, F>(&mut self, f: F) -> R
+    fn claim<R, F>(&mut self, f: F) -> R
     where
         F: FnOnce(&mut Self::Data) -> R,
     {
@@ -302,7 +302,7 @@ pub unsafe trait Mutex {
 
     /// Creates a critical section and grants temporary access to the protected data
     #[cfg(not(armv7m))]
-    fn lock<R, F>(&mut self, f: F) -> R
+    fn claim<R, F>(&mut self, f: F) -> R
     where
         F: FnOnce(&mut Self::Data) -> R,
     {

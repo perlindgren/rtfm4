@@ -1206,11 +1206,11 @@ fn spawn(ctxt: &Context, app: &App, analysis: &Analysis) -> proc_macro2::TokenSt
 
                 use rtfm::Mutex;
 
-                if let Some(index) = (#free { #priority }).lock(|f| f.split().1.dequeue()) {
+                if let Some(index) = (#free { #priority }).claim(|f| f.split().1.dequeue()) {
                     ptr::write(#inputs.get_mut().get_unchecked_mut(usize::from(index)), (#pats));
                     #scheduleds_write
 
-                    #ready { #priority }.lock(|rq| {
+                    #ready { #priority }.claim(|rq| {
                         rq.split().0.enqueue_unchecked((#enum_::#task, index))
                     });
 
@@ -1298,7 +1298,7 @@ fn schedule(ctxt: &Context, app: &App) -> proc_macro2::TokenStream {
 
                 use rtfm::Mutex;
 
-                if let Some(index) = (#free { #priority }).lock(|f| f.split().1.dequeue()) {
+                if let Some(index) = (#free { #priority }).claim(|f| f.split().1.dequeue()) {
                     ptr::write(#inputs.get_mut().get_unchecked_mut(usize::from(index)), (#pats));
                     ptr::write(
                         #scheduleds.get_mut().get_unchecked_mut(usize::from(index)),
@@ -1311,7 +1311,7 @@ fn schedule(ctxt: &Context, app: &App) -> proc_macro2::TokenStream {
                         task: #enum_::#task,
                     };
 
-                    ({#timer_queue { #priority }}).lock(|tq| tq.enqueue_unchecked(nr));
+                    ({#timer_queue { #priority }}).claim(|tq| tq.enqueue_unchecked(nr));
 
                     Ok(())
                 } else {
@@ -1407,7 +1407,7 @@ fn timer_queue(ctxt: &Context, app: &App, analysis: &Analysis) -> proc_macro2::T
 
             quote!(
                 #enum_::#task => {
-                    (#ready { #priority }).lock(|rq| {
+                    (#ready { #priority }).claim(|rq| {
                         rq.split().0.enqueue_unchecked((#tenum::#task, index))
                     });
 

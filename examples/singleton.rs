@@ -50,7 +50,7 @@ const APP: () = {
     fn foo(x: Box<M>) {
         println!("foo({})", x);
 
-        resources.P.lock(|p| p.dealloc(x));
+        resources.P.claim(|p| p.dealloc(x));
 
         debug::exit(debug::EXIT_SUCCESS);
     }
